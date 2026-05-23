@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PacketScope — tcpdump 封包威脅分析</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0f1117;color:#e0e0e0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang TC",sans-serif;font-size:13px;min-height:100vh}
+
+.header{background:linear-gradient(135deg,#0f1117,#141826);border-bottom:1px solid #1f2937;padding:14px 24px;display:flex;align-items:center;gap:12px}
+.logo{width:38px;height:38px;border-radius:9px;background:#0a1628;border:1.5px solid #0e4f7a;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
+.header-text h1{font-size:15px;font-weight:700;color:#f9fafb}
+.header-text p{font-size:11px;color:#6b7280;margin-top:1px}
+
+.main{max-width:1240px;margin:0 auto;padding:20px 20px 40px}
+
+/* Input zone */
+.drop-zone{background:#141826;border:2px dashed #2a2d3e;border-radius:10px;padding:16px;transition:border-color .2s,background .2s}
+.drop-zone.dragover{border-color:#0ea5e9;background:#0a1628}
+.zone-label{font-size:11px;color:#6b7280;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between}
+.zone-label span{color:#374151}
+textarea{width:100%;height:220px;background:#0a0c10;border:1px solid #1f2937;border-radius:6px;color:#86efac;font-family:"Fira Code","Consolas","Courier New",monospace;font-size:11.5px;padding:10px;resize:vertical;outline:none;line-height:1.55;tab-size:2}
+textarea:focus{border-color:#0ea5e9}
+textarea::placeholder{color:#1f2937}
+
+.hint-row{margin-top:8px;font-size:11px;color:#374151}
+.hint-row code{background:#141826;border:1px solid #1f2937;padding:1px 6px;border-radius:3px;color:#5eead4;font-family:monospace;font-size:11px}
+
+.btn-row{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.btn{padding:7px 18px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-weight:700;font-family:inherit;transition:opacity .15s}
+.btn:hover{opacity:.82}
+.btn-run{background:#0369a1;color:#fff}
+.btn-sample{background:#1a1d2e;color:#94a3b8;border:1px solid #2a2d3e}
+.btn-clear{background:#1a1d2e;color:#4b5563;border:1px solid #1f2937}
+
+/* Stats bar */
+.stats-bar{display:flex;flex-wrap:wrap;gap:6px;margin:16px 0}
+.stat-pill{background:#141826;border:1px solid #1f2937;border-radius:20px;padding:4px 13px;font-size:11px;color:#6b7280}
+.stat-pill strong{color:#e0e0e0}
+.stat-pill.warn{border-color:#7c2d12;background:#1a0d06}
+.stat-pill.warn strong{color:#fca5a5}
+
+/* Findings */
+.section-hdr{font-size:10px;color:#4b5563;text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px;margin-top:20px;display:flex;align-items:center;gap:8px}
+.section-hdr::after{content:'';flex:1;height:1px;background:#1f2937}
+
+.findings{display:flex;flex-direction:column;gap:5px}
+.finding{border-radius:7px;padding:9px 13px;border-left:3px solid;display:flex;gap:10px;align-items:flex-start}
+.fhigh{background:#160a0a;border-color:#dc2626}
+.fmed{background:#160f00;border-color:#d97706}
+.flow{background:#080f1a;border-color:#0ea5e9}
+.finfo{background:#0d1117;border-color:#374151}
+.f-left{flex-shrink:0;padding-top:1px}
+.sev{font-size:10px;font-weight:700;padding:2px 7px;border-radius:7px;white-space:nowrap}
+.sev-high{background:#450a0a;color:#fca5a5}
+.sev-med{background:#431a00;color:#fcd34d}
+.sev-low{background:#0c1f3d;color:#7dd3fc}
+.sev-info{background:#1a1d2e;color:#6b7280}
+.f-body{}
+.f-type{font-size:12px;font-weight:700;color:#f9fafb;margin-bottom:2px}
+.f-desc{font-size:12px;color:#94a3b8;font-family:monospace}
+.f-detail{font-size:11px;color:#6b7280;margin-top:2px}
+.no-findings{font-size:12px;color:#374151;padding:8px 0}
+
+/* Charts */
+.charts-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:6px}
+.chart-card{background:#141826;border:1px solid #1f2937;border-radius:8px;padding:14px}
+.chart-card h3{font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px}
+canvas{display:block;width:100%}
+
+/* Table */
+.table-card{background:#141826;border:1px solid #1f2937;border-radius:8px;overflow:hidden;margin-top:6px}
+.table-controls{padding:10px 14px;display:flex;gap:8px;border-bottom:1px solid #1f2937;align-items:center;flex-wrap:wrap}
+.table-controls label{font-size:10px;color:#4b5563;text-transform:uppercase;letter-spacing:.04em}
+.sinput{background:#0a0c10;border:1px solid #1f2937;border-radius:5px;padding:5px 10px;color:#e0e0e0;font-size:12px;font-family:inherit;outline:none;min-width:0}
+.sinput:focus{border-color:#0ea5e9}
+#tbl-search{flex:1;min-width:120px}
+table{width:100%;border-collapse:collapse;font-size:11px}
+th{padding:6px 11px;text-align:left;color:#4b5563;font-size:10px;text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid #1f2937;white-space:nowrap;user-select:none}
+th.sortable{cursor:pointer}
+th.sortable:hover{color:#94a3b8}
+th.sorted{color:#0ea5e9}
+td{padding:5px 11px;border-bottom:1px solid #0d1015;font-family:"Fira Code","Consolas",monospace;font-size:11px;color:#94a3b8;white-space:nowrap}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:rgba(14,165,233,0.04)}
+.ip-int{color:#86efac}
+.ip-ext{color:#fca5a5}
+.ip-v6{color:#94a3b8}
+.fl-S{color:#60a5fa}
+.fl-A{color:#4b5563}
+.fl-P{color:#a78bfa}
+.fl-R{color:#ef4444}
+.fl-F{color:#f59e0b}
+.fl-U{color:#f97316}
+.proto-tcp{color:#67e8f9}
+.proto-udp{color:#a78bfa}
+.proto-icmp{color:#fcd34d}
+.tbl-footer{display:flex;align-items:center;gap:8px;padding:9px 14px;font-size:11px;color:#4b5563;border-top:1px solid #1f2937}
+.pg-btn{background:#1a1d2e;border:1px solid #2a2d3e;color:#94a3b8;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-family:inherit}
+.pg-btn:hover{border-color:#0ea5e9;color:#e0e0e0}
+.pg-btn:disabled{opacity:.3;cursor:default}
+
+.hidden{display:none}
+@media(max-width:720px){.charts-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">⬡</div>
+  <div class="header-text">
+    <h1>PacketScope</h1>
+    <p>tcpdump 威脅分析 · 本機處理 · 資料不外傳 · by Kerr</p>
+  </div>
+</div>
+
+<div class="main">
+
+  <!-- Input -->
+  <div class="drop-zone" id="drop-zone">
+    <div class="zone-label">
+      <span>貼上 tcpdump 輸出，或拖曳 .txt 檔案</span>
+      <span id="line-count" style="font-family:monospace">0 行</span>
+    </div>
+    <textarea id="inp" spellcheck="false"
+      placeholder="2026-05-23 10:15:32.123456 IP 192.168.1.5.54321 > 8.8.8.8.443: Flags [S], seq 1, win 64240, length 0
+2026-05-23 10:15:32.175432 IP 8.8.8.8.443 > 192.168.1.5.54321: Flags [SA], seq 1, ack 2, win 65535, length 52
+..."></textarea>
+  </div>
+  <div class="hint-row">
+    推薦指令：<code>tcpdump -tttt -nn -q &gt; capture.txt</code>
+    &nbsp;或含 flags：<code>tcpdump -tttt -nn &gt; capture.txt</code>
+    &nbsp;· 支援 <code>-tttt / -tt / -nn</code> 格式
+  </div>
+
+  <div class="btn-row">
+    <button class="btn btn-run" onclick="runAnalysis()">▶ 分析封包</button>
+    <button class="btn btn-sample" onclick="loadSample()">📋 載入範例（含攻擊特徵）</button>
+    <button class="btn btn-clear" onclick="clearAll()">清除</button>
+  </div>
+
+  <!-- Results -->
+  <div id="results" class="hidden">
+
+    <div class="stats-bar" id="stats-bar"></div>
+
+    <div class="section-hdr">威脅偵測結果</div>
+    <div class="findings" id="findings-list"></div>
+
+    <div class="section-hdr">流量視覺化</div>
+    <div class="charts-grid">
+      <div class="chart-card">
+        <h3>封包時間軸（每10秒bin）</h3>
+        <canvas id="c-timeline" height="130"></canvas>
+      </div>
+      <div class="chart-card">
+        <h3>Top 來源 IP（封包數）</h3>
+        <canvas id="c-talkers" height="130"></canvas>
+      </div>
+    </div>
+
+    <div class="section-hdr">封包明細</div>
+    <div class="table-card">
+      <div class="table-controls">
+        <input id="tbl-search" class="sinput" placeholder="搜尋 IP / Port..." oninput="filterTable()">
+        <label>協定</label>
+        <select id="proto-filter" class="sinput" style="width:90px" onchange="filterTable()">
+          <option value="">全部</option>
+          <option value="TCP">TCP</option>
+          <option value="UDP">UDP</option>
+          <option value="ICMP">ICMP</option>
+        </select>
+        <label>方向</label>
+        <select id="dir-filter" class="sinput" style="width:100px" onchange="filterTable()">
+          <option value="">全部</option>
+          <option value="out">出站（→外部）</option>
+          <option value="in">入站（外部→）</option>
+          <option value="internal">內部</option>
+        </select>
+      </div>
+      <table>
+        <thead><tr>
+          <th>相對時間</th>
+          <th class="sortable" onclick="sortTbl('src')">來源 IP <span id="sort-src"></span></th>
+          <th>SPort</th>
+          <th class="sortable" onclick="sortTbl('dst')">目標 IP <span id="sort-dst"></span></th>
+          <th>DPort</th>
+          <th>Proto</th>
+          <th>Flags</th>
+          <th class="sortable" onclick="sortTbl('len')">Len <span id="sort-len"></span></th>
+        </tr></thead>
+        <tbody id="tbl-body"></tbody>
+      </table>
+      <div class="tbl-footer">
+        <button class="pg-btn" id="btn-prev" onclick="prevPage()">◀ 上頁</button>
+        <button class="pg-btn" id="btn-next" onclick="nextPage()">下頁 ▶</button>
+        <span id="pg-info"></span>
+        <span style="margin-left:auto" id="row-info"></span>
+      </div>
+    </div>
+
+  </div><!-- /results -->
+</div><!-- /main -->
+
+<script>
+// ─── Utilities ────────────────────────────────────────────────────────────────
+
+const RFC1918 = ip => {
+  const p = ip.split('.').map(Number);
+  return p[0]===10 || (p[0]===172&&p[1]>=16&&p[1]<=31) || (p[0]===192&&p[1]===168) || p[0]===127;
+};
+const mean  = a => a.reduce((s,x)=>s+x,0)/a.length;
+const vari  = a => { const m=mean(a); return a.reduce((s,x)=>s+(x-m)**2,0)/a.length; };
+const std   = a => Math.sqrt(vari(a));
+const fmtB  = b => b<1024?b+'B':b<1048576?(b/1024).toFixed(1)+'KB':(b/1048576).toFixed(2)+'MB';
+const fmtT  = s => s<60?s.toFixed(2)+'s':s<3600?(s/60).toFixed(1)+'m':(s/3600).toFixed(2)+'h';
+
+// ─── Parser ───────────────────────────────────────────────────────────────────
+
+function parseTs(s) {
+  // "2026-05-23 10:15:32.123456" → epoch seconds
+  if (/^\d{4}-\d{2}-\d{2} /.test(s)) return Date.parse(s.replace(' ','T')+'Z')/1e3;
+  // "10:15:32.123456" → seconds-of-day
+  if (/^\d{2}:\d{2}:\d{2}/.test(s)) { const [h,m,sec]=s.split(':'); return +h*3600+ +m*60+parseFloat(sec); }
+  return parseFloat(s); // unix float
+}
+
+function parseLine(raw) {
+  raw = raw.trim();
+  if (!raw || raw[0]==='#') return null;
+  const hasIP = raw.includes(' IP ') || raw.includes(' IP6 ');
+  if (!hasIP) return null;
+
+  const tsM = raw.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+|\d{2}:\d{2}:\d{2}\.\d+|\d+\.\d{4,})/);
+  if (!tsM) return null;
+  const ts = parseTs(tsM[1]);
+
+  let src_ip='', src_port=0, dst_ip='', dst_port=0, proto='TCP', flags='', length=0;
+
+  // IPv4 with ports
+  const m4 = raw.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\.(\d+)\s*>\s*(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\.(\d+)/);
+  if (m4) {
+    [,src_ip,src_port,dst_ip,dst_port] = m4;
+    src_port=+src_port; dst_port=+dst_port;
+  } else {
+    // IPv4 no port (ICMP, ARP)
+    const m4n = raw.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s*>\s*(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
+    if (m4n) { [,src_ip,dst_ip]=m4n; proto='ICMP'; }
+    else if (raw.includes(' IP6 ')) { src_ip='[IPv6]'; dst_ip='[IPv6]'; proto='IPv6'; }
+    else return null;
+  }
+
+  // Protocol detection
+  if (raw.includes(': ICMP') || raw.includes(' ICMP ')) proto='ICMP';
+  else if (raw.includes(': UDP') || raw.match(/\bUDP\b/)) proto='UDP';
+  else if (proto!=='ICMP') proto='TCP';
+
+  // Flags
+  const fm = raw.match(/Flags \[([^\]]+)\]/);
+  if (fm) flags=fm[1];
+
+  // Length
+  const lm = raw.match(/length (\d+)/);
+  if (lm) length=+lm[1];
+
+  return { ts, src_ip, src_port:+src_port, dst_ip, dst_port:+dst_port, proto, flags, length };
+}
+
+function parseCapture(text) {
+  const pkts = [];
+  for (const line of text.split('\n')) {
+    const p = parseLine(line);
+    if (p) pkts.push(p);
+  }
+  if (!pkts.length) return pkts;
+  // Normalize to relative time
+  const t0 = pkts[0].ts;
+  for (const p of pkts) p.rel = +(p.ts - t0).toFixed(6);
+  return pkts;
+}
+
+// ─── Detection Modules ────────────────────────────────────────────────────────
+
+// 1. Beaconing — regular interval to same dst (C2 heartbeat)
+function detectBeaconing(pkts) {
+  const convs = {};
+  for (const p of pkts) {
+    if (p.proto!=='TCP'&&p.proto!=='UDP') continue;
+    const k = `${p.src_ip}→${p.dst_ip}:${p.dst_port}`;
+    (convs[k]||(convs[k]={src:p.src_ip,dst:p.dst_ip,dp:p.dst_port,ts:[]})).ts.push(p.rel);
+  }
+  const out=[];
+  for (const [,c] of Object.entries(convs)) {
+    if (c.ts.length<5) continue;
+    c.ts.sort((a,b)=>a-b);
+    const ivs=[];
+    for (let i=1;i<c.ts.length;i++) ivs.push(c.ts[i]-c.ts[i-1]);
+    const m=mean(ivs), sd=std(ivs);
+    if (m<3) continue; // too fast
+    const cv=sd/m;
+    if (cv<0.25) {
+      const ext=!RFC1918(c.dst)&&c.dst!=='[IPv6]';
+      out.push({
+        severity: ext?'high':'medium',
+        type:'Beaconing / C2 心跳',
+        desc:`${c.src} → ${c.dst}:${c.dp}`,
+        detail:`間隔 ${m.toFixed(1)}s ±${sd.toFixed(1)}s，CV=${cv.toFixed(3)}，共 ${c.ts.length} 次連線${ext?' ⚠ 外部IP':''}`,
+        score: (1/cv)*(ext?2:1)
+      });
+    }
+  }
+  return out.sort((a,b)=>b.score-a.score).slice(0,5);
+}
+
+// 2. Port / Host Scan
+function detectScan(pkts) {
+  const srcMap={};
+  for (const p of pkts) {
+    if (!p.dst_port) continue;
+    const s=srcMap[p.src_ip]||(srcMap[p.src_ip]=[]);
+    s.push({t:p.rel,dip:p.dst_ip,dp:p.dst_port,flags:p.flags||''});
+  }
+  const out=[];
+  for (const [src,ev] of Object.entries(srcMap)) {
+    const W=30;
+    for (let i=0;i<ev.length;i++) {
+      const win=ev.filter(e=>e.t>=ev[i].t&&e.t<=ev[i].t+W);
+      const uPorts=new Set(win.map(e=>e.dp)).size;
+      const uHosts=new Set(win.map(e=>e.dip)).size;
+      const synCnt=win.filter(e=>e.flags.includes('S')&&!e.flags.includes('A')).length;
+      if (uPorts>=10) {
+        out.push({severity:'high',type:'Port Scan（垂直）',
+          desc:`${src} 掃描多個 Port`,
+          detail:`${W}s 內掃 ${uPorts} 個 Port，SYN ${synCnt} 個，目標 ${[...new Set(win.map(e=>e.dip))][0]}`,
+          score:uPorts*2});
+        break;
+      }
+      if (uHosts>=10) {
+        out.push({severity:'high',type:'Host Scan（水平）',
+          desc:`${src} 掃描多個主機`,
+          detail:`${W}s 內掃 ${uHosts} 個 IP，Port ${[...new Set(win.map(e=>e.dp))].slice(0,4).join('/')}`,
+          score:uHosts*1.5});
+        break;
+      }
+    }
+  }
+  // dedupe per src
+  const seen=new Set();
+  return out.filter(f=>{const k=f.desc.split(' ')[0];if(seen.has(k))return false;seen.add(k);return true;});
+}
+
+// 3. Exfiltration / Large Outbound
+function detectExfil(pkts) {
+  const out={};
+  for (const p of pkts) {
+    if (!RFC1918(p.src_ip)||RFC1918(p.dst_ip)||p.dst_ip==='[IPv6]') continue;
+    const s=out[p.src_ip]||(out[p.src_ip]={bytes:0,lens:[],dsts:new Set()});
+    s.bytes+=p.length; s.lens.push(p.length); s.dsts.add(p.dst_ip);
+  }
+  const sizes=pkts.map(p=>p.length).filter(x=>x>0).sort((a,b)=>a-b);
+  const med=sizes[Math.floor(sizes.length/2)]||64;
+  const res=[];
+  for (const [ip,d] of Object.entries(out)) {
+    const avg=d.bytes/d.lens.length;
+    if (d.bytes>512*1024) res.push({severity:'medium',type:'外傳流量偏大',
+      desc:`${ip} → 外部 (${d.dsts.size} 個目標)`,
+      detail:`送出 ${fmtB(d.bytes)}，平均封包 ${fmtB(avg)}（中位數 ${fmtB(med)}）`,score:d.bytes});
+    else if (avg>med*8&&d.lens.length>=5) res.push({severity:'medium',type:'封包尺寸異常',
+      desc:`${ip} → 外部`,
+      detail:`平均封包 ${fmtB(avg)} 是正常 ${(avg/med).toFixed(1)}x，${d.lens.length} 個封包`,score:avg/med});
+  }
+  return res.sort((a,b)=>b.score-a.score).slice(0,4);
+}
+
+// 4. CUSUM Change Point
+function detectSpike(pkts) {
+  if (pkts.length<20) return [];
+  const BIN=10, dur=pkts[pkts.length-1].rel-pkts[0].rel;
+  const bins=Math.ceil(dur/BIN)+1;
+  const cnt=new Array(bins).fill(0);
+  for (const p of pkts){const b=Math.floor(p.rel/BIN);if(b>=0&&b<bins)cnt[b]++;}
+  const nz=cnt.filter(x=>x>0);
+  if (nz.length<3) return [];
+  const m=mean(nz), sd=std(nz)||1;
+  const k=0.5*sd, h=4.5*sd;
+  let S=0; const res=[];
+  for (let i=0;i<cnt.length;i++){
+    S=Math.max(0,S+cnt[i]-m-k);
+    if (S>h){
+      const t=i*BIN, ratio=cnt[i]/m;
+      res.push({severity:ratio>8?'high':'medium',type:'流量異常暴增',
+        desc:`T+${fmtT(t)} 流量突升`,
+        detail:`${cnt[i]} 封包/10s，正常基線 ${m.toFixed(1)}，爆增 ${ratio.toFixed(1)}x`,score:ratio});
+      S=0;
+    }
+  }
+  return res.slice(0,3);
+}
+
+// 5. Suspicious Ports
+const SUSP_PORTS = {
+  4444:'Metasploit預設',1337:'後門慣用',31337:'Elite後門',
+  6666:'IRC/殭屍網路',6667:'IRC/殭屍網路',6668:'IRC/殭屍網路',
+  9001:'Tor relay',9050:'Tor SOCKS',1080:'SOCKS Proxy',
+  23:'Telnet明文',69:'TFTP',161:'SNMP',
+  5900:'VNC',3389:'RDP',135:'MS RPC',139:'NetBIOS',445:'SMB',
+  2222:'非標SSH',4545:'後門',8888:'非標HTTP',
+};
+function detectSuspPorts(pkts) {
+  const pm={};
+  for (const p of pkts){
+    if (!SUSP_PORTS[p.dst_port]) continue;
+    const s=pm[p.dst_port]||(pm[p.dst_port]={srcs:new Set(),cnt:0});
+    s.srcs.add(p.src_ip); s.cnt++;
+  }
+  const highPorts=[4444,1337,31337,6666,6667,6668];
+  return Object.entries(pm).map(([port,d])=>({
+    severity:highPorts.includes(+port)?'high':'low',
+    type:'可疑 Port 連線',
+    desc:`Port ${port} — ${SUSP_PORTS[port]}`,
+    detail:`${d.cnt} 個封包，${d.srcs.size} 個來源IP`,
+    score:d.cnt*(highPorts.includes(+port)?3:1)
+  })).sort((a,b)=>b.score-a.score);
+}
+
+// 6. DNS anomaly (high query rate, long names)
+function detectDNS(pkts) {
+  const dns=pkts.filter(p=>p.dst_port===53||p.src_port===53);
+  if (dns.length<10) return [];
+  const dur=dns[dns.length-1].rel-dns[0].rel||1;
+  const qps=dns.length/dur;
+  const res=[];
+  if (qps>5) res.push({severity:'medium',type:'DNS 查詢頻率異常',
+    desc:`${dns.length} 個 DNS 封包 / ${dur.toFixed(0)}s`,
+    detail:`查詢速率 ${qps.toFixed(2)} req/s，可能為 DGA 或 DNS 隧道`,score:qps});
+  return res;
+}
+
+// ─── Run All ──────────────────────────────────────────────────────────────────
+
+function analyzeAll(pkts) {
+  const all=[
+    ...detectBeaconing(pkts),
+    ...detectScan(pkts),
+    ...detectExfil(pkts),
+    ...detectSpike(pkts),
+    ...detectSuspPorts(pkts),
+    ...detectDNS(pkts),
+  ];
+  const ord={high:0,medium:1,low:2,info:3};
+  return all.sort((a,b)=>(ord[a.severity]??3)-(ord[b.severity]??3));
+}
+
+// ─── Stats ────────────────────────────────────────────────────────────────────
+
+function buildStats(pkts) {
+  const usrc=new Set(pkts.map(p=>p.src_ip));
+  const udst=new Set(pkts.map(p=>p.dst_ip));
+  const uport=new Set(pkts.map(p=>p.dst_port).filter(x=>x));
+  const dur=pkts.length>1?pkts[pkts.length-1].rel-pkts[0].rel:0;
+  const bytes=pkts.reduce((s,p)=>s+p.length,0);
+  const extSrc=pkts.filter(p=>p.src_ip!=='[IPv6]'&&!RFC1918(p.src_ip)).map(p=>p.src_ip);
+  const uextSrc=new Set(extSrc).size;
+  const protos={};
+  for (const p of pkts) protos[p.proto]=(protos[p.proto]||0)+1;
+  return {total:pkts.length,usrc:usrc.size,udst:udst.size,uport:uport.size,dur,bytes,uextSrc,protos};
+}
+
+// ─── Canvas Charts ────────────────────────────────────────────────────────────
+
+function resizeCanvas(id,h) {
+  const c=document.getElementById(id);
+  c.width=c.parentElement.clientWidth-28;
+  c.height=h||130;
+  return c;
+}
+
+function drawLine(id, vals, color='#0ea5e9') {
+  const c=resizeCanvas(id,130);
+  const ctx=c.getContext('2d'),W=c.width,H=c.height;
+  ctx.clearRect(0,0,W,H);
+  if(!vals.length)return;
+  const max=Math.max(...vals)||1;
+  const PL=8,PT=8,PB=22,PR=8;
+  const cW=W-PL-PR, cH=H-PT-PB;
+
+  // grid
+  ctx.strokeStyle='#1a1d2e'; ctx.lineWidth=1;
+  for(let i=0;i<=4;i++){const y=PT+cH/4*i;ctx.beginPath();ctx.moveTo(PL,y);ctx.lineTo(W-PR,y);ctx.stroke();}
+
+  // area
+  ctx.beginPath();
+  ctx.moveTo(PL,PT+cH);
+  for(let i=0;i<vals.length;i++){
+    const x=PL+(i/(vals.length-1||1))*cW;
+    const y=PT+cH-(vals[i]/max)*cH;
+    ctx.lineTo(x,y);
+  }
+  ctx.lineTo(PL+cW,PT+cH); ctx.closePath();
+  ctx.fillStyle='rgba(14,165,233,0.12)'; ctx.fill();
+
+  // line
+  ctx.beginPath(); ctx.strokeStyle=color; ctx.lineWidth=1.5;
+  for(let i=0;i<vals.length;i++){
+    const x=PL+(i/(vals.length-1||1))*cW;
+    const y=PT+cH-(vals[i]/max)*cH;
+    i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+
+  // x axis
+  ctx.strokeStyle='#1f2937'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(PL,H-PB); ctx.lineTo(W-PR,H-PB); ctx.stroke();
+
+  // labels
+  ctx.fillStyle='#4b5563'; ctx.font='9px monospace'; ctx.textAlign='center';
+  const step=Math.ceil(vals.length/6);
+  for(let i=0;i<vals.length;i+=step){
+    const x=PL+(i/(vals.length-1||1))*cW;
+    ctx.fillText((i*10)+'s',x,H-6);
+  }
+}
+
+function drawHBar(id, entries) {
+  const c=resizeCanvas(id,130);
+  const ctx=c.getContext('2d'),W=c.width,H=c.height;
+  ctx.clearRect(0,0,W,H);
+  if(!entries.length)return;
+  const n=Math.min(entries.length,8);
+  const max=entries[0][1]||1;
+  const LW=100, rowH=H/n;
+  ctx.font='9.5px monospace'; ctx.textBaseline='middle';
+  for(let i=0;i<n;i++){
+    const [ip,val]=entries[i];
+    const y=i*rowH;
+    const bw=(val/max)*(W-LW-12);
+    ctx.fillStyle=RFC1918(ip)?'#064e3b':'#450a0a';
+    ctx.fillRect(LW,y+3,bw,rowH-6);
+    ctx.fillStyle='#6b7280';
+    const label=ip.length>13?ip.slice(0,13)+'…':ip;
+    ctx.textAlign='right'; ctx.fillText(label,LW-4,y+rowH/2);
+    ctx.fillStyle='#4b5563'; ctx.textAlign='left';
+    ctx.fillText(val,LW+bw+4,y+rowH/2);
+  }
+  // color legend
+  ctx.fillStyle='#086048'; ctx.fillRect(2,H-11,8,8);
+  ctx.fillStyle='#4b5563'; ctx.font='9px sans-serif'; ctx.textAlign='left';
+  ctx.fillText('內部',13,H-7);
+  ctx.fillStyle='#450a0a'; ctx.fillRect(42,H-11,8,8);
+  ctx.fillStyle='#4b5563'; ctx.fillText('外部',53,H-7);
+}
+
+function buildTimeline(pkts) {
+  if(!pkts.length)return[];
+  const BIN=10;
+  const n=Math.ceil(pkts[pkts.length-1].rel/BIN)+1;
+  const cnt=new Array(n).fill(0);
+  for(const p of pkts){const b=Math.floor(p.rel/BIN);if(b>=0&&b<n)cnt[b]++;}
+  return cnt;
+}
+
+function buildTopSrc(pkts) {
+  const m={};
+  for(const p of pkts) m[p.src_ip]=(m[p.src_ip]||0)+1;
+  return Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,10);
+}
+
+// ─── Table ────────────────────────────────────────────────────────────────────
+
+let _all=[], _filt=[], _page=0, _sKey=null, _sDir=1;
+const PG=80;
+
+function flagHtml(f) {
+  return (f||'').split('').map(ch=>{
+    const cls={S:'fl-S',A:'fl-A',P:'fl-P',R:'fl-R',F:'fl-F',U:'fl-U'}[ch]||'';
+    return `<span class="${cls}">${ch}</span>`;
+  }).join('');
+}
+
+function ipHtml(ip) {
+  if(ip==='[IPv6]') return `<span class="ip-v6">${ip}</span>`;
+  return `<span class="${RFC1918(ip)?'ip-int':'ip-ext'}">${ip}</span>`;
+}
+
+function renderTbl() {
+  const start=_page*PG;
+  const slice=_filt.slice(start,start+PG);
+  const pCls={TCP:'proto-tcp',UDP:'proto-udp',ICMP:'proto-icmp'};
+  document.getElementById('tbl-body').innerHTML=slice.map(p=>`<tr>
+    <td>${p.rel.toFixed(2)}s</td>
+    <td>${ipHtml(p.src_ip)}</td>
+    <td>${p.src_port||'-'}</td>
+    <td>${ipHtml(p.dst_ip)}</td>
+    <td>${p.dst_port||'-'}</td>
+    <td class="${pCls[p.proto]||''}">${p.proto}</td>
+    <td>${flagHtml(p.flags)}</td>
+    <td>${p.length}</td>
+  </tr>`).join('');
+  const total=Math.ceil(_filt.length/PG)||1;
+  document.getElementById('pg-info').textContent=`第 ${_page+1} / ${total} 頁`;
+  document.getElementById('row-info').textContent=`${_filt.length.toLocaleString()} 筆`;
+  document.getElementById('btn-prev').disabled=_page===0;
+  document.getElementById('btn-next').disabled=(_page+1)*PG>=_filt.length;
+}
+
+function filterTable() {
+  const q=document.getElementById('tbl-search').value.toLowerCase();
+  const proto=document.getElementById('proto-filter').value;
+  const dir=document.getElementById('dir-filter').value;
+  _filt=_all.filter(p=>{
+    if(proto&&p.proto!==proto)return false;
+    if(dir==='out'&&(!RFC1918(p.src_ip)||RFC1918(p.dst_ip)))return false;
+    if(dir==='in'&&(RFC1918(p.src_ip)||!RFC1918(p.dst_ip)))return false;
+    if(dir==='internal'&&(!RFC1918(p.src_ip)||!RFC1918(p.dst_ip)))return false;
+    if(!q)return true;
+    return p.src_ip.includes(q)||p.dst_ip.includes(q)||
+      String(p.src_port).includes(q)||String(p.dst_port).includes(q)||
+      p.proto.toLowerCase().includes(q)||(p.flags||'').includes(q);
+  });
+  _page=0; renderTbl();
+}
+
+function sortTbl(key) {
+  if(_sKey===key)_sDir*=-1; else{_sKey=key;_sDir=1;}
+  document.querySelectorAll('[id^="sort-"]').forEach(e=>e.textContent='');
+  document.getElementById('sort-'+key).textContent=_sDir>0?'↑':'↓';
+  _filt.sort((a,b)=>{
+    const av=key==='src'?a.src_ip:key==='dst'?a.dst_ip:a.length;
+    const bv=key==='src'?b.src_ip:key==='dst'?b.dst_ip:b.length;
+    return typeof av==='string'?av.localeCompare(bv)*_sDir:(av-bv)*_sDir;
+  });
+  renderTbl();
+}
+
+function prevPage(){if(_page>0){_page--;renderTbl();}}
+function nextPage(){if((_page+1)*PG<_filt.length){_page++;renderTbl();}}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
+
+function runAnalysis() {
+  const text=document.getElementById('inp').value;
+  if(!text.trim()){alert('請貼上 tcpdump 輸出');return;}
+
+  const pkts=parseCapture(text);
+  if(!pkts.length){
+    alert('無法解析封包。請確認格式：tcpdump -tttt -nn ...');
+    return;
+  }
+
+  // Stats bar
+  const s=buildStats(pkts);
+  const extWarn=s.uextSrc>0;
+  document.getElementById('stats-bar').innerHTML=[
+    `<div class="stat-pill">總封包 <strong>${s.total.toLocaleString()}</strong></div>`,
+    `<div class="stat-pill">時長 <strong>${fmtT(s.dur)}</strong></div>`,
+    `<div class="stat-pill">內部IP <strong>${s.usrc}</strong></div>`,
+    `<div class="stat-pill">目標IP <strong>${s.udst}</strong></div>`,
+    `<div class="stat-pill">涉及Port <strong>${s.uport}</strong></div>`,
+    `<div class="stat-pill">總流量 <strong>${fmtB(s.bytes)}</strong></div>`,
+    extWarn?`<div class="stat-pill warn">外部來源IP <strong>${s.uextSrc}</strong></div>`:'',
+    ...Object.entries(s.protos).map(([k,v])=>`<div class="stat-pill">${k} <strong>${v}</strong></div>`),
+  ].join('');
+
+  // Findings
+  const findings=analyzeAll(pkts);
+  const fEl=document.getElementById('findings-list');
+  if(!findings.length){
+    fEl.innerHTML='<div class="no-findings">✓ 未偵測到明顯威脅特徵（不代表無威脅，請人工確認明細）</div>';
+  } else {
+    const smap={high:'fhigh',medium:'fmed',low:'flow',info:'finfo'};
+    const bmap={high:'sev-high',medium:'sev-med',low:'sev-low',info:'sev-info'};
+    fEl.innerHTML=findings.map(f=>`
+      <div class="finding ${smap[f.severity]||'finfo'}">
+        <div class="f-left"><span class="sev ${bmap[f.severity]||'sev-info'}">${f.severity.toUpperCase()}</span></div>
+        <div class="f-body">
+          <div class="f-type">${f.type}</div>
+          <div class="f-desc">${f.desc}</div>
+          <div class="f-detail">${f.detail}</div>
+        </div>
+      </div>`).join('');
+  }
+
+  // Charts
+  const timeline=buildTimeline(pkts);
+  const topSrc=buildTopSrc(pkts);
+  requestAnimationFrame(()=>{
+    drawLine('c-timeline',timeline);
+    drawHBar('c-talkers',topSrc);
+  });
+
+  // Table
+  _all=[...pkts]; _filt=[...pkts]; _page=0;
+  filterTable();
+
+  document.getElementById('results').classList.remove('hidden');
+  requestAnimationFrame(()=>document.getElementById('results').scrollIntoView({behavior:'smooth',block:'start'}));
+}
+
+function clearAll() {
+  document.getElementById('inp').value='';
+  document.getElementById('line-count').textContent='0 行';
+  document.getElementById('results').classList.add('hidden');
+}
+
+// ─── Drag & Drop ──────────────────────────────────────────────────────────────
+
+const dz=document.getElementById('drop-zone');
+dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('dragover');});
+dz.addEventListener('dragleave',()=>dz.classList.remove('dragover'));
+dz.addEventListener('drop',e=>{
+  e.preventDefault(); dz.classList.remove('dragover');
+  const f=e.dataTransfer.files[0]; if(!f)return;
+  const r=new FileReader();
+  r.onload=ev=>{
+    document.getElementById('inp').value=ev.target.result;
+    updateLineCount(ev.target.result);
+  };
+  r.readAsText(f);
+});
+
+document.getElementById('inp').addEventListener('input',function(){updateLineCount(this.value);});
+
+function updateLineCount(v){
+  const n=v.split('\n').filter(l=>l.trim()).length;
+  document.getElementById('line-count').textContent=n.toLocaleString()+' 行';
+}
+
+// ─── Sample Data ──────────────────────────────────────────────────────────────
+
+function loadSample() {
+  const T0=Date.parse('2026-05-23T09:00:00Z')/1000;
+  const lines=[];
+  const ts=(off,jitter=0)=>{
+    const t=T0+off+(Math.random()-0.5)*jitter;
+    const d=new Date(t*1000);
+    return d.toISOString().replace('T',' ').replace('Z','').replace(/(\.\d{3})\d*/,'$1')+
+      String(Math.floor(Math.random()*999)).padStart(3,'0');
+  };
+
+  // Normal HTTPS traffic
+  for(let i=0;i<40;i++){
+    const t=i*3.7,sp=50000+i;
+    lines.push(`${ts(t)} IP 192.168.1.10.${sp} > 1.1.1.1.443: Flags [S], seq 1, win 64240, length 0`);
+    lines.push(`${ts(t+0.05)} IP 1.1.1.1.443 > 192.168.1.10.${sp}: Flags [SA], seq 1, ack 2, win 65535, length 52`);
+    lines.push(`${ts(t+0.1)} IP 192.168.1.10.${sp} > 1.1.1.1.443: Flags [PA], seq 2, ack 2, length 350`);
+    lines.push(`${ts(t+0.15)} IP 1.1.1.1.443 > 192.168.1.10.${sp}: Flags [PA], seq 2, ack 351, length 1400`);
+  }
+
+  // DNS queries
+  for(let i=0;i<25;i++){
+    lines.push(`${ts(i*5.2)} IP 192.168.1.10.${45000+i} > 8.8.8.8.53: UDP, length 30`);
+    lines.push(`${ts(i*5.2+0.03)} IP 8.8.8.8.53 > 192.168.1.10.${45000+i}: UDP, length 80`);
+  }
+
+  // 🔴 Beaconing: 192.168.1.105 → 45.92.1.100:4444 every ~60s (C2 heartbeat)
+  for(let i=0;i<9;i++){
+    const t=15+i*60,sp=55000+i;
+    lines.push(`${ts(t,2)} IP 192.168.1.105.${sp} > 45.92.1.100.4444: Flags [S], seq 1, win 64240, length 0`);
+    lines.push(`${ts(t+0.08)} IP 45.92.1.100.4444 > 192.168.1.105.${sp}: Flags [SA], seq 1, ack 2, length 128`);
+    lines.push(`${ts(t+0.12)} IP 192.168.1.105.${sp} > 45.92.1.100.4444: Flags [PA], seq 2, ack 2, length 48`);
+    lines.push(`${ts(t+0.5)} IP 45.92.1.100.4444 > 192.168.1.105.${sp}: Flags [PA], seq 2, ack 49, length 32`);
+    lines.push(`${ts(t+0.55)} IP 192.168.1.105.${sp} > 45.92.1.100.4444: Flags [A], length 0`);
+  }
+
+  // 🔴 Port Scan: 10.0.0.88 scanning 192.168.1.1
+  for(let port=20;port<48;port++){
+    const t=18+(port-20)*0.25;
+    lines.push(`${ts(t)} IP 10.0.0.88.${60000+port} > 192.168.1.1.${port}: Flags [S], seq 1, win 1024, length 0`);
+    if([22,80,443,3306].includes(port)){
+      lines.push(`${ts(t+0.04)} IP 192.168.1.1.${port} > 10.0.0.88.${60000+port}: Flags [SA], seq 1, ack 2, length 0`);
+    } else {
+      lines.push(`${ts(t+0.02)} IP 192.168.1.1.${port} > 10.0.0.88.${60000+port}: Flags [R], seq 0, length 0`);
+    }
+  }
+
+  // 🟡 Large outbound (possible exfil): 192.168.1.50 → 203.0.113.50
+  for(let i=0;i<25;i++){
+    lines.push(`${ts(250+i*2)} IP 192.168.1.50.${62000+i} > 203.0.113.50.443: Flags [PA], seq ${i*8192}, ack 1, length 8192`);
+    lines.push(`${ts(250+i*2+0.1)} IP 203.0.113.50.443 > 192.168.1.50.${62000+i}: Flags [A], seq 1, ack ${i*8192+8192}, length 0`);
+  }
+
+  // 🔴 Traffic spike at ~T+420s (DDoS simulation)
+  for(let i=0;i<90;i++){
+    lines.push(`${ts(420+i*0.09)} IP 198.51.100.${i%60} > 192.168.1.1.80: Flags [S], seq 1, win 1024, length 0`);
+  }
+
+  // Suspicious: someone connects to Metasploit default port
+  lines.push(`${ts(380)} IP 192.168.1.77.54321 > 10.0.0.99.4444: Flags [S], seq 1, win 64240, length 0`);
+  lines.push(`${ts(380.05)} IP 10.0.0.99.4444 > 192.168.1.77.54321: Flags [SA], seq 1, ack 2, length 0`);
+  lines.push(`${ts(380.1)} IP 192.168.1.77.54321 > 10.0.0.99.4444: Flags [PA], seq 2, ack 2, length 512`);
+
+  lines.sort((a,b)=>a.localeCompare(b));
+  document.getElementById('inp').value=lines.join('\n');
+  updateLineCount(lines.join('\n'));
+}
+</script>
+</body>
+</html>
