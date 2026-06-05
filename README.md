@@ -81,6 +81,75 @@ tcpdump -tttt -nn -r capture.pcap > capture.txt
 
 ---
 
+---
+
+## PacketScope Plus（ML 強化版）
+
+> 適合長期監控場景，例如 Honeypot + Switch SPAN Port 持續分析。
+
+`src/` 目錄內為 Python ML 版本，在規則制偵測之上加了兩層分析：
+
+### 設計場景
+
+```
+Internet
+    ↓
+Switch WAN Port
+    ├── 正常流量 → Firewall → 內網
+    └── SPAN Mirror → 分析機
+                        ↓
+                   tcpdump 持續抓包
+                        ↓
+                   PacketScope Plus
+                        ↓
+                   風險排行 + 告警
+```
+
+Honeypot 接收攻擊流量，SPAN port 複製完整 WAN 流量——兩者結合，看得到所有攻擊嘗試，不只是打到 Honeypot 的部分。
+
+### 雙軌 ML 架構
+
+**軌道 A：Flow 異常偵測**
+- ECOD（無參數，不需標注資料）+ Isolation Forest
+- 偵測封包大小、時序、TCP flag 比例等統計特徵的異常
+
+**軌道 B：Graph 節點分析**
+- 把所有 Flow 建成有向圖，計算每個 IP 的 PageRank
+- 高 PageRank = 大量其他節點通過此 IP 中轉 → 可疑跳板 / Pivot 節點
+- 橫向移動在 Graph 上特別明顯
+
+**融合：LightGBM 排序**
+- 用軟標籤（規則產生初始分數）訓練，不需要人工標注
+- 輸出統一風險分數（0~1）+ 風險等級（CRITICAL / HIGH / MEDIUM / LOW）
+
+### 使用方式
+
+```bash
+pip install -r requirements.txt
+
+# 分析 tcpdump 檔案
+python src/detector.py capture.txt
+
+# 指定時間窗（預設 30s）
+python src/detector.py capture.txt 60
+
+# 持續監控（搭配 cron 或 watch）
+tcpdump -tttt -nn -i eth0 > /tmp/wan.txt &
+watch -n 30 "python src/detector.py /tmp/wan.txt"
+```
+
+### 與 HTML 版本的差異
+
+| | index.html | src/ (Plus) |
+|---|---|---|
+| 安裝 | 零依賴 | pip install |
+| 輸入 | 貼上 / 拖曳 | CLI 檔案路徑 |
+| 偵測方式 | 規則制 | ML + Graph |
+| 適合場景 | 快速查一筆封包 | 持續監控 / Honeypot |
+| 告警 | 無 | 可接 TG / ELK |
+
+---
+
 ## 同系列工具
 
 **[log-anonymizer](https://github.com/kerr20801/log-anonymizer)** — Log 遮蔽 + Z-score/IQR/CUSUM 異常偵測
