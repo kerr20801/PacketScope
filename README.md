@@ -23,15 +23,19 @@
 
 | 威脅類型 | 嚴重度 | 說明 |
 |---------|--------|------|
-| Beaconing / C2 心跳 | 🔴 HIGH | 固定間隔對外連線（低 CV 值），符合 C2 heartbeat 特徵 |
+| Beaconing / C2 心跳 | 🔴 HIGH | 固定間隔對外連線，**容忍重傳/漏包造成的離群間隔** |
+| **DNS 隧道** | 🔴 HIGH | 同一母網域下大量高熵子網域（資料外傳偽裝成 DNS 查詢） |
+| **DGA 網域** | 🔴 HIGH | 網域名稱亂度接近隨機上限 + 數字混雜，惡意程式自動產生的特徵 |
 | Port Scan（垂直） | 🔴 HIGH | 30秒內掃 10+ 個 Port（SYN flood 模式） |
 | Host Scan（水平） | 🔴 HIGH | 30秒內掃 10+ 個主機（同 Port） |
 | 可疑 Port | 🔴 HIGH | Metasploit 4444、後門 1337/31337、IRC botnet 等 |
-| 流量異常暴增 | 🔴/🟡 | CUSUM 演算法偵測基線外的爆增 |
-| 外傳流量偏大 | 🟡 MEDIUM | 往外部 IP 傳送異常大量資料（可能 Exfil） |
+| 流量異常暴增 | 🔴/🟡 | CUSUM + 截尾基線，避免用異常值墊高自己的門檻 |
+| 外傳流量偏大 | 🟡 MEDIUM | **依擷取時長算速率**，不再用固定總量門檻 |
 | 封包尺寸異常 | 🟡 MEDIUM | 平均封包大小遠超中位數 |
-| DNS 查詢頻率異常 | 🟡 MEDIUM | 高頻 DNS（DGA / DNS Tunnel 特徵） |
+| DNS 查詢頻率異常 | 🟡 MEDIUM | 高頻 DNS |
 | 可疑 Port（低危） | 🔵 LOW | Telnet/RDP/VNC/SMB 等明文或高風險協定 |
+
+支援 IPv4 與 **IPv6**；私網判斷含 RFC1918、link-local（169.254）、CGNAT（100.64/10）、ULA（fc00::/7）。
 
 ---
 
@@ -147,6 +151,62 @@ watch -n 30 "python src/detector.py /tmp/wan.txt"
 | 偵測方式 | 規則制 | ML + Graph |
 | 適合場景 | 快速查一筆封包 | 持續監控 / Honeypot |
 | 告警 | 無 | 可接 TG / ELK |
+
+---
+
+## 架構與擴充
+
+### 資料契約
+
+`parseLine()` 把每一行 tcpdump 正規化成單一物件，**所有偵測器都只吃這個結構**：
+
+```js
+{ ts, rel, src_ip, src_port, dst_ip, dst_port, proto, flags, length, qname }
+```
+
+偵測邏輯與 tcpdump 文字格式是**解耦的** —— 換掉 parser 就能餵別的來源（pcap、NetFlow、瀏覽器 webRequest），偵測器不用動。
+
+### 加新偵測器
+
+每個 `detectXxx(pkts)` 回傳統一格式的陣列，加進 `analyzeAll()` 即可：
+
+```js
+{ severity: 'high'|'medium'|'low', type, desc, detail, score }
+```
+
+### ⚠️ 新功能建議獨立成模組，不要繼續往 index.html 疊
+
+目前是單一 HTML 檔（約 37KB，偵測邏輯約 400 行），對「開啟即用、零安裝」這個定位是對的，但已經接近單檔可維護的上限。**再加新偵測就該拆檔**：
+
+```
+src/
+  parser.js        ← 輸入層（換來源只動這裡）
+  detectors/*.js   ← 每個偵測器一個檔，可獨立測試
+  index.html       ← 只負責 UI 與組裝
+```
+
+拆檔的實際好處不是美觀，是**可測試性**：現有的偵測器目前得靠 regex 從 HTML 抽出來才能跑自動化測試（本次改版就是這樣驗的），拆開後可以直接 `require()` 進測試。
+
+另外，`src/` 底下的 Python 版（`detector.py` / `features.py` / `parser.py`，用 pyod + LightGBM + networkx）是**另一條線**：適合排程批次分析與持續監控，跟這個「貼上就看」的網頁版定位不同，兩者不要混在一起維護。
+
+### 調參
+
+門檻都是用模擬資料校準過的，不是拍腦袋定的（見 commit 訊息的數據）。要調的話這幾個是主要旋鈕：
+
+| 位置 | 參數 | 現值 | 意義 |
+|---|---|---|---|
+| `detectBeaconing` | `tcv<0.20 \|\| cv<0.25` | — | 越大越敏感、誤報越多 |
+| `detectBeaconing` | `med<1` | 1s | 間隔下限，防大量傳輸被當心跳 |
+| `detectScan` | `uPorts/uHosts>=10` | 10 | 30 秒視窗內的掃描門檻 |
+| `detectExfil` | `RATE` / `FLOOR` | 20KB/s / 256KB | 外傳速率與總量下限 |
+| `detectDNS` | `ne>0.94`, `digits>0.1` | — | DGA 亂度與數字比 |
+| `detectDNS` | `subs.size>=20` | 20 | 判定隧道所需的子網域數 |
+
+### 已知限制
+
+- **稀疏取樣的正常流量可能誤判成 beaconing**：偶爾連熱門網站的主機，其連線間隔會因中央極限定理而顯得規律。這是行為型偵測的固有問題，新舊版皆有（模擬中約 13%）。看到 beaconing 警報請先確認目的地是不是常見服務。
+- **偵測邏輯只用合成流量驗證過**，尚未跑過真實世界的大型 pcap。
+- 高抖動（40%+）的 C2 命中率約 82%，刻意隨機化的心跳仍可能漏掉。
 
 ---
 
